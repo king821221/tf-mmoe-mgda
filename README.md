@@ -4,7 +4,8 @@ This repo contains implementation of MMOE and MGDA for multi_task learning.
 
 MMOE(Multi-gate Mixture-of-Experts) implementation follows that from https://github.com/drawbridge/keras-mmoe 
 
-MGDA(multiple gradient descent algorithm) implementation follows that from https://github.com/intel-isl/MultiObjectiveOptimization
+MGDA(multiple gradient descent algorithm) tensorflow implementation follows that from https://github.com/intel-isl/MultiObjectiveOptimization,
+which provide pytorch and numpy implementation
 
 The task shared variables are composed of the MMOE expert kernels, bias and gate kernels and bias
 
