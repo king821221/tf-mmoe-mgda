@@ -18,6 +18,9 @@ For illustrated purposes, a 2-task classification demo and a 3-task classificati
 Data and origin implementation are from keras-mmoe
 
 Steps:
-    pip -r requirements.txt
-    python census_income_demo.py
-    python synthetic_demo.py
+
+pip -r requirements.txt
+
+python census_income_demo.py
+
+python synthetic_demo.py
