@@ -16,6 +16,8 @@ The task shared variables in MGDA are composed of the MMOE expert kernels, bias 
 
 For illustrated purposes, a 2-task classification demo and a 3-task classification demo are provided.
 Data and origin implementation are from keras-mmoe
+
+Steps:
     pip -r requirements.txt
     python census_income_demo.py
     python synthetic_demo.py
