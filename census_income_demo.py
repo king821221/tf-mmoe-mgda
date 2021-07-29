@@ -94,9 +94,11 @@ def data_preparation():
     for c in continuous_columns:
         scaler = StandardScaler()
         train_df[c] = train_df[c].apply(lambda x: 0.0 if np.isnan(x) else x)
-        train_df[c] = scaler.fit_transform(train_df[c])
+        train_c_scaled = scaler.fit_transform(np.reshape(np.array(train_df[c]), (-1, 1)))
+        train_df[c] = np.reshape(train_c_scaled, (-1))
         other_df[c] = other_df[c].apply(lambda x: 0.0 if np.isnan(x) else x)
-        other_df[c] = scaler.transform(other_df[c])
+        other_c_scaled = scaler.transform(np.reshape(np.array(other_df[c]), (-1, 1)))
+        other_df[c] = np.reshape(other_c_scaled, (-1))
 
     train_raw_labels = train_df[label_columns]
     other_raw_labels = other_df[label_columns]
@@ -174,7 +176,7 @@ def main():
         train_ds = tf.data.Dataset.from_tensor_slices(
             (dict(train_data), train_label))
 
-        train_ds = train_ds.prefetch(len(train_data) / 3)
+        train_ds = train_ds.prefetch(int(len(train_data) / 3))
         train_ds = train_ds.shuffle(buffer_size=len(train_data), seed=SEED)
         train_ds = train_ds.batch(args.batch_size)
         train_iter = train_ds.make_one_shot_iterator()

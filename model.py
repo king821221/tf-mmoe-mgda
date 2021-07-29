@@ -272,9 +272,9 @@ class Model(object):
                 tf.summary.scalar("eval loss {}".format(loss_key), loss_val)
                 loss += loss_val
 
-        predict_tensors = tf.stack(predicts.values(), axis=1)
+        predict_tensors = tf.stack(list(predicts.values()), axis=1)
 
-        label_tensors = tf.stack(labels.values(), axis=1)
+        label_tensors = tf.stack(list(labels.values()), axis=1)
 
         predictions = {"prob": predict_tensors, 'labels': label_tensors}
 
