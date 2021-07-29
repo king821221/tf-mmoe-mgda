@@ -1,7 +1,9 @@
+import logging
 import tensorflow as tf
-
+import sys
 from util import tf_print
 
+logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
 class MinNormSolver:
     MAX_ITER = 250
@@ -98,19 +100,19 @@ class MinNormSolver:
 
         tmax_f_mask = tf_print(tmax_f_mask, message = 'tmax_f_mask')
 
-        print("tmax_f_mask {}".format(tmax_f_mask))
+        logging.info("tmax_f_mask {}".format(tmax_f_mask))
 
         tmax_f_mask_max = tf.cast(tf.argmax(tmax_f_mask), dtype=tf.int32)
 
         tmax_f_mask_max = tf_print(tmax_f_mask_max, message = 'tmax_f_mask_max')
 
-        print("tmax_f_mask_max {}".format(tmax_f_mask_max))
+        logging.info("tmax_f_mask_max {}".format(tmax_f_mask_max))
 
         tmax_f = tf.cond(tf.reduce_max(tmax_f_mask) > 0,
                          lambda : tmax_v[tmax_f_mask_max],
                          lambda : tmax_f)
 
-        print("tmax_f {}".format(tmax_f))
+        logging.info("tmax_f {}".format(tmax_f))
 
         tmax_f = tf_print(tmax_f, message = 'tmax_f')
 
@@ -183,7 +185,7 @@ class MinNormSolver:
 
         n=len(task_gradients) # number of tasks
 
-        print("number of tasks {}".format(n))
+        logging.info("min_norm solve number of tasks {}".format(n))
 
         dtype = task_gradients[0][0].dtype
 
@@ -196,7 +198,7 @@ class MinNormSolver:
         # dps: {(i,j) -> score}
         init_sol, dps = MinNormSolver._min_norm_2d(task_gradients, grad_mat)
 
-        print("init_sol {} dps {}".format(init_sol, dps))
+        logging.info("init_sol {} dps {}".format(init_sol, dps))
 
         assert_op = tf.Assert(
             tf.logical_and(init_sol[0][0] >= 0, init_sol[0][1] >= 0),
@@ -214,8 +216,10 @@ class MinNormSolver:
             i_onehot = tf.cast(i_onehot, dtype=sol_vec_i.dtype)
             j_onehot = tf.cast(j_onehot, dtype=sol_vec_j.dtype)
 
-            print("solv_vec_i {} i_onehot {}".format(sol_vec_i, i_onehot))
-            print("solv_vec_j {} j_onehot {}".format(sol_vec_j, j_onehot))
+            logging.info("solv_vec_i {} i_onehot {}".format(sol_vec_i,
+                                                            i_onehot))
+            logging.info("solv_vec_j {} j_onehot {}".format(sol_vec_j,
+                                                            j_onehot))
 
             sol_vec_i = tf_print(sol_vec_i, message='sol_vec_i')
             sol_vec_j = tf_print(sol_vec_j, message='sol_vec_j')
@@ -253,7 +257,7 @@ class MinNormSolver:
             sol_vec_in = tf_print(sol_vec_in, message = 'sol_vec_in', level=0)
             grad_dir = -1.0*tf.matmul(grad_matrix, sol_vec_exp) # (n, 1)
             grad_dir = tf.squeeze(grad_dir, -1) # (n,)
-            print("next point sol vec {} grad_dir {} n {}".format(
+            logging.info("next point sol vec {} grad_dir {} n {}".format(
                 sol_vec_in, grad_dir, n
             ))
             grad_dir = tf_print(grad_dir, message = 'grad_dir', level=0)
@@ -310,5 +314,6 @@ class MinNormSolver:
             for t in grads:
                 gn[t] = 1.0
         else:
-            print('ERROR: Invalid Normalization Type')
+            raise KeyError('ERROR: Invalid Normalization Type {}'
+                           .format(normalization_type))
         return gn

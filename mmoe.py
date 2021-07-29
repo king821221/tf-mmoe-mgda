@@ -6,8 +6,11 @@ Licensed under the MIT License (see LICENSE for details)
 Written by Alvin Deng
 """
 
+import logging
+import sys
 import tensorflow as tf
 
+logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
 class MMoE(tf.keras.layers.Layer):
     """
@@ -110,8 +113,6 @@ class MMoE(tf.keras.layers.Layer):
                             for weight shape computations
         """
 
-        print("call MMOE build")
-
         assert input_shape is not None and len(input_shape) >= 2
 
         input_dimension = int(input_shape[-1])
@@ -169,21 +170,24 @@ class MMoE(tf.keras.layers.Layer):
         gate_outputs = []
         final_outputs = []
 
-        print("MMOE call inputs {}".format(inputs))
+        logging.info("MMOE call inputs {}".format(inputs))
 
         # f_{i}(x) = activation(W_{i} * x + b), where activation is ReLU according to the paper
-        expert_outputs = tf.tensordot(a=inputs, b=self.expert_kernels, axes=[1,0])
+        expert_outputs = tf.tensordot(a=inputs,
+                                      b=self.expert_kernels,
+                                      axes=[1,0])
         expert_outputs = tf.verify_tensor_all_finite(expert_outputs,
                                                      'INVALID expert outputs dot')
         # Add the bias term to the expert weights if necessary
         if self.use_expert_bias:
-            expert_outputs = tf.keras.backend.bias_add(x=expert_outputs, bias=self.expert_bias)
+            expert_outputs = tf.keras.backend.bias_add(x=expert_outputs,
+                                                       bias=self.expert_bias)
         expert_outputs = tf.verify_tensor_all_finite(expert_outputs,
                                                      'INVALID expert outputs bias')
         expert_outputs = self.expert_activation(expert_outputs)
         expert_outputs = tf.verify_tensor_all_finite(expert_outputs,
                                                      'INVALID expert outputs act')
-        print("MMOE call expert outputs {}".format(expert_outputs))
+        logging.info("MMOE call expert outputs {}".format(expert_outputs))
         tf.summary.histogram("expert_outputs", expert_outputs)
         tf.summary.histogram("expert_kernel", self.expert_kernels)
         tf.summary.histogram("expert_bias", self.expert_bias)
@@ -195,7 +199,8 @@ class MMoE(tf.keras.layers.Layer):
                 gate_output, 'INVALID gate{} output dot'.format(index))
             # Add the bias term to the gate weights if necessary
             if self.use_gate_bias:
-                gate_output = tf.keras.backend.bias_add(x=gate_output, bias=self.gate_bias[index])
+                gate_output = tf.keras.backend.bias_add(
+                    x=gate_output, bias=self.gate_bias[index])
             gate_output = tf.verify_tensor_all_finite(
                 gate_output, 'INVALID gate{} output bias'.format(index))
             gate_output = self.gate_activation(gate_output)
@@ -205,13 +210,19 @@ class MMoE(tf.keras.layers.Layer):
             tf.summary.histogram("gate_output_{}".format(index), gate_output)
             tf.summary.histogram("gate_kernel", gate_kernel)
             tf.summary.histogram("gate_bias_{}", self.gate_bias[index])
-        print("gate_outputs {}".format(gate_outputs))
+        logging.info("gate_outputs {}".format(gate_outputs))
 
         # f^{k}(x) = sum_{i=1}^{n}(g^{k}(x)_{i} * f_{i}(x))
         for gate_output in gate_outputs:
-            expanded_gate_output = tf.keras.backend.expand_dims(gate_output, axis=1)
-            weighted_expert_output = expert_outputs * tf.keras.backend.repeat_elements(expanded_gate_output, self.units, axis=1)
-            final_outputs.append(tf.keras.backend.sum(weighted_expert_output, axis=2))
+            expanded_gate_output = tf.keras.backend.expand_dims(gate_output,
+                                                                axis=1)
+            weighted_expert_output = expert_outputs * \
+                                     tf.keras.backend.repeat_elements(
+                                         expanded_gate_output,
+                                         self.units,
+                                         axis=1)
+            final_outputs.append(tf.keras.backend.sum(weighted_expert_output,
+                                                      axis=2))
 
         return final_outputs
 
@@ -261,23 +272,3 @@ class MMoE(tf.keras.layers.Layer):
         base_config = super(MMoE, self).get_config()
 
         return dict(list(base_config.items()) + list(config.items()))
-
-def main():
-    mmoe_layers = MMoE(
-        units=4,
-        num_experts=8,
-        num_tasks=2
-    )
-    input_feats = tf.zeros((10, 1024))
-    mmoe_layers(input_feats)
-    with tf.Session() as sess:
-        sess.run(tf.global_variables_initializer())
-        sess.run(tf.local_variables_initializer())
-        for idx in range(2):
-            input_feats = tf.zeros((10, 1024))
-            output_feats = mmoe_layers(input_feats)
-            output_feats = sess.run(output_feats)
-            print((output_feats))
-
-if __name__ == '__main__':
-    main()

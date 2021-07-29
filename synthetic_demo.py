@@ -13,8 +13,11 @@ import numpy as np
 import tensorflow as tf
 import traceback
 import sys
+import logging
 
 from model import Model
+
+logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
 import argparse
 
@@ -27,7 +30,7 @@ parser.add_argument('--num_epochs', default=30, type=int)
 parser.add_argument('--dropout_rate', default=0.2, type=float)
 parser.add_argument('--l2_emb', default=0.0, type=float)
 parser.add_argument('--gradient_norm_type', default='l2', type=str)
-parser.add_argument('--summary_dir', default='./summary', type=str)
+parser.add_argument('--model_checkpoint_dir', default='./sync_model', type=str)
 
 args = parser.parse_args()
 
@@ -109,44 +112,35 @@ def data_preparation():
     test_data = data.iloc[110000:]
     test_label = {'y0': y0[110000:], 'y1':y1[110000:], 'y2':y2[110000:]}
 
-    print("y0 {} y1 {} y2 {}".format(np.shape(y0), np.shape(y1), np.shape(y2)))
+    logging.info("y0 {} y1 {} y2 {}".format(np.shape(y0), np.shape(y1), np.shape(y2)))
 
     dict_outputs = {
         'y0': 2,
         'y1': 2,
         'y2': 2
     }
-    output_info = [(dict_outputs[key], key) for key in sorted(dict_outputs.keys())]
+    output_info = [(dict_outputs[key], key)
+                   for key in sorted(dict_outputs.keys())]
 
-    return train_data, train_label, validation_data, validation_label, test_data, test_label, output_info
+    return train_data, train_label, \
+           validation_data, validation_label, \
+           test_data, test_label, output_info
 
 def main():
     # Load the data
-    train_data, train_label, validation_data, validation_label, test_data, test_label, output_info = data_preparation()
+    train_data, train_label, validation_data, \
+    validation_label, test_data, test_label, output_info = \
+        data_preparation()
 
-    print('Training data shape = {}'.format(train_data.shape))
-    print('Validation data shape = {}'.format(validation_data.shape))
-    print('Test data shape = {}'.format(test_data.shape))
+    logging.info('Training data shape = {}'.format(train_data.shape))
+    logging.info('Validation data shape = {}'.format(validation_data.shape))
+    logging.info('Test data shape = {}'.format(test_data.shape))
 
-    assert isinstance(train_label, dict), 'INVALID train_label NOT DICT {}'.format(type(train_label))
+    assert isinstance(train_label, dict), \
+        'INVALID train_label NOT DICT {}'.format(type(train_label))
     for task_key, labels in train_label.items():
-        print("task key {} label shape = {}".format(task_key, np.shape(labels)))
-
-    train_ds = tf.data.Dataset.from_tensor_slices((dict(train_data), train_label))
-
-    train_ds = train_ds.shuffle(buffer_size=len(train_data), seed=SEED)
-    train_ds = train_ds.batch(args.batch_size)
-    train_iter = train_ds.make_initializable_iterator()
-
-    print("train_ds {}".format(train_ds))
-
-    val_ds = tf.data.Dataset.from_tensor_slices((dict(validation_data), validation_label))
-    val_ds = val_ds.batch(args.eval_batch_size)
-    val_iter = val_ds.make_initializable_iterator()
-
-    test_ds = tf.data.Dataset.from_tensor_slices((dict(test_data), test_label))
-    test_ds = test_ds.batch(1)
-    test_iter = test_ds.make_initializable_iterator()
+        logging.info("task key {} label shape = {}".format(task_key,
+                                                           np.shape(labels)))
 
     num_tasks = len(train_label.keys())
     num_experts = 8
@@ -157,140 +151,104 @@ def main():
         return tf.nn.softmax_cross_entropy_with_logits(labels=labels,
                                                        logits=logits)
 
-    model = Model(num_tasks, num_experts, output_info, optimizer, loss_fn, args)
+    def input_train_fn():
+        train_ds = tf.data.Dataset.from_tensor_slices(
+            (dict(train_data), train_label))
 
-    train_feats_t, train_label_t = train_iter.get_next()
-    input_feats_tensors = list(train_feats_t.values())
-    input_feats_tensors = [tf.cast(tf.expand_dims(x, -1), tf.float32) for x in
-                           input_feats_tensors]
-    input_feats = tf.concat(input_feats_tensors, -1)
-    print("input_feats {}".format(input_feats))
-    task_logits = model.compute_logits(input_feats, training=True)
-    print("task_logits {}".format(task_logits))
-    task_label_onehot = {}
-    for task_key, task_label in train_label_t.items():
-        for label_dim, task_t_k in output_info:
-            if task_key == task_t_k:
-                task_label_oh = tf.one_hot(task_label, label_dim)
-                task_label_onehot[task_key] = task_label_oh
-    print("task_label_onehot {}".format(task_label_onehot))
-    train_op, train_loss, solv_vec = model.train_loss(task_logits,
-                                                      task_label_onehot)
-    tf.summary.histogram("train_loss", train_loss)
+        train_ds = train_ds.prefetch(len(train_data) / 3)
+        train_ds = train_ds.shuffle(buffer_size=len(train_data), seed=SEED)
+        train_ds = train_ds.batch(args.batch_size)
+        train_iter = train_ds.make_one_shot_iterator()
 
-    eval_feats_t, eval_label_t = val_iter.get_next()
-    eval_feats_tensors = list(eval_feats_t.values())
-    eval_feats_tensors = [
-        tf.cast(tf.expand_dims(x, -1), tf.float32)
-        for x in eval_feats_tensors]
-    eval_feats = tf.concat(eval_feats_tensors, -1)
-    print("eval_feats {}".format(eval_feats))
-    eval_task_logits = model.compute_logits(eval_feats)
-    print("eval_task_logits {}".format(eval_task_logits))
-    eval_task_label_onehot = {}
-    for task_key, task_label in eval_label_t.items():
-        for label_dim, task_t_k in output_info:
-            if task_key == task_t_k:
-                task_label_oh = tf.one_hot(task_label, label_dim)
-                eval_task_label_onehot[task_key] = task_label_oh
-    print("eval_task_label_onehot {}".format(eval_task_label_onehot))
-    eval_loss, eval_losses_d = model.eval_loss(
-        eval_task_logits, eval_task_label_onehot)
-    tf.summary.histogram("eval_loss", eval_loss)
-    for task_key, eval_task_loss in eval_losses_d.items():
-        tf.summary.histogram("eval_loss_{}".format(task_key),
-                             eval_task_loss)
+        train_feats_t, train_label_t = train_iter.get_next()
+        input_feats_tensors = list(train_feats_t.values())
+        input_feats_tensors = [tf.cast(tf.expand_dims(x, -1), tf.float32)
+                               for x in input_feats_tensors]
+        input_feats = tf.concat(input_feats_tensors, -1)
+        task_label_onehot = {}
+        for task_key, task_label in train_label_t.items():
+            for label_dim, task_t_k in output_info:
+                if task_key == task_t_k:
+                    task_label_oh = tf.one_hot(task_label, label_dim)
+                    task_label_onehot[task_key] = task_label_oh
+        logging.info("input_train feats {} labels {}".format(
+            input_feats, task_label_onehot))
+        return input_feats, task_label_onehot
 
-    with tf.Session() as sess:
-        train_writer = tf.summary.FileWriter(args.summary_dir + '/train',
-                                             sess.graph)
-        val_writer = tf.summary.FileWriter(args.summary_dir + '/validation',
-                                             sess.graph)
-        sess.run(tf.global_variables_initializer())
-        sess.run(tf.local_variables_initializer())
+    def input_eval_fn():
+        val_ds = tf.data.Dataset.from_tensor_slices(
+            (dict(validation_data), validation_label))
+        val_ds = val_ds.prefetch(args.eval_batch_size * 3)
+        val_ds = val_ds.batch(args.eval_batch_size)
+        val_iter = val_ds.make_one_shot_iterator()
 
-        terminate = False
-        merged = tf.summary.merge_all()
+        eval_feats_t, eval_label_t = val_iter.get_next()
+        eval_feats_tensors = list(eval_feats_t.values())
+        eval_feats_tensors = [
+            tf.cast(tf.expand_dims(x, -1), tf.float32)
+            for x in eval_feats_tensors]
+        eval_feats = tf.concat(eval_feats_tensors, -1)
+        eval_task_label_onehot = {}
+        for task_key, task_label in eval_label_t.items():
+            for label_dim, task_t_k in output_info:
+                if task_key == task_t_k:
+                    task_label_oh = tf.one_hot(task_label, label_dim)
+                    eval_task_label_onehot[task_key] = task_label_oh
+        logging.info("input_eval_fn feats {} labels {}".format(
+            eval_feats, eval_task_label_onehot))
+        return eval_feats, eval_task_label_onehot
 
-        for epoch in range(args.num_epochs):
-            if terminate:
-                break
-            flag = True
-            steps = 0
-            sess.run(train_iter.initializer)
-            sess.run(val_iter.initializer)
-            while flag:
-                try:
-                    train_op_t, train_loss_t, solv_vec_t, train_summary =\
-                        sess.run([train_op, train_loss, solv_vec, merged])
-                    print("epoch = {} steps = {} "
-                          "loss = {} solv_vec = {}".format(
-                        epoch, steps, train_loss_t, solv_vec_t))
-                    steps+=1
-                    train_writer.add_summary(train_summary, steps)
-                    if steps % 3 == 0:
-                        print("Evaluation at epoch {} step {}".format(epoch,
-                                                                      steps))
-                        eval_flag = True
-                        eval_losses = []
-                        eval_loss_tasks = {}
-                        sess.run(val_iter.initializer)
-                        while eval_flag:
-                            try:
-                                eval_loss_t, eval_losses_d_t, eval_summary =\
-                                    sess.run([eval_loss, eval_losses_d, merged])
-                                eval_losses.append(eval_loss_t)
-                                for task_key, eval_loss_task in eval_losses_d_t.items():
-                                    eval_loss_tasks.setdefault(task_key, [])
-                                    eval_loss_tasks[task_key].append(eval_loss_task)
-                                val_writer.add_summary(eval_summary, steps)
-                            except tf.errors.OutOfRangeError:
-                                eval_flag = False
-                                print("EVAL final loss at step {}: {}".format(
-                                    steps, np.mean(eval_losses)
-                                ))
-                                for task_key in eval_loss_tasks.keys():
-                                    print("task {} eval_loss {}".format(
-                                        task_key,
-                                        np.mean(eval_loss_tasks[task_key])
-                                    ))
+    def input_predict_fn():
+        test_ds = tf.data.Dataset.from_tensor_slices(
+            (dict(test_data), test_label))
+        test_ds = test_ds.batch(1)
+        test_iter = test_ds.make_one_shot_iterator()
+        test_feats_t, _ = test_iter.get_next()
+        test_feats_tensor = list(test_feats_t.values())
+        test_feats_tensors = [
+            tf.cast(tf.expand_dims(x, -1), tf.float32)
+            for x in test_feats_tensor]
+        test_feats = tf.concat(test_feats_tensors, -1)
+        logging.info("input_predict_fn feats {}".format(test_feats))
+        return test_feats
 
-                except tf.errors.OutOfRangeError:
-                    print("END training no more data epoch {}".format(epoch))
-                    flag = False
-                    continue
-                except:
-                    traceback.print_exc()
-                    print("END training with signal {} epoch {}".format(
-                        sys.exc_info()[0], epoch
-                    ))
-                    flag = False
-                    terminate = True
+    def task_share_grad_var_fn(vars):
+        def select_var_fn(var):
+            return var.name.find('m_mo_e') >= 0 and \
+                   (var.name.find('expert_kernel') >= 0 or \
+                   var.name.find('expert_bias') >= 0 or \
+                   var.name.find('gate_kernel') >= 0 or \
+                   var.name.find('gate_bias') >= 0)
+        return [var for var in vars if select_var_fn(var)]
 
-        print("Training Done")
-        if not terminate:
-            eval_flag = True
-            eval_losses = []
-            eval_loss_tasks = {}
-            sess.run(val_iter.initializer)
-            while eval_flag:
-                try:
-                    eval_loss_t, eval_losses_d_t, eval_summary = \
-                        sess.run([eval_loss, eval_losses_d, merged])
-                    eval_losses.append(eval_loss_t)
-                    for task_key, eval_loss_task in eval_losses_d_t.items():
-                        eval_loss_tasks.setdefault(task_key, [])
-                        eval_loss_tasks[task_key].append(eval_loss_task)
-                    val_writer.add_summary(eval_summary, steps)
-                except tf.errors.OutOfRangeError:
-                    eval_flag = False
-                    print("EVAL final loss at step {}: {}".format(
-                        steps, np.mean(eval_losses)
-                    ))
-                    for task_key in eval_loss_tasks.keys():
-                        print("task {} eval_loss {}".format(
-                            task_key,
-                            np.mean(eval_loss_tasks[task_key])))
+    def eval_metrics_fn(logits, labels, task_key=None):
+        return tf.metrics.accuracy(labels=tf.argmax(labels, -1),
+                                   predictions=tf.argmax(logits, -1))
+
+    model = Model(num_tasks, num_experts, output_info, optimizer,
+                  input_train_fn=input_train_fn,
+                  input_eval_fn=input_eval_fn,
+                  input_predict_fn=input_predict_fn,
+                  task_share_grad_var_fn=task_share_grad_var_fn,
+                  loss_fn=loss_fn,
+                  eval_metrics_fn=eval_metrics_fn,
+                  args=args)
+    terminate = False
+
+    for epoch in range(args.num_epochs):
+        if terminate:
+            break
+        try:
+            logging.info("Start train eval at epoch {}".format(epoch+1))
+            model.train()
+            eval_out = model.evaluate()
+            logging.info("eval_out {} at epoch {}".format(eval_out, epoch+1))
+        except:
+            traceback.print_exc()
+            logging.error("END training with signal {} epoch {}".format(
+                sys.exc_info()[0], epoch
+            ))
+            terminate = True
 
 
 if __name__ == '__main__':
