@@ -16,6 +16,8 @@ import tensorflow as tf
 from model import Model
 import sys
 from sklearn.preprocessing import StandardScaler
+from util import tf_print
+from scipy import stats
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
@@ -94,11 +96,15 @@ def data_preparation():
     for c in continuous_columns:
         scaler = StandardScaler()
         train_df[c] = train_df[c].apply(lambda x: 0.0 if np.isnan(x) else x)
+        logging.info("continous column {} stats in train: {}".format(c, stats.describe(train_df[c])))
         train_c_scaled = scaler.fit_transform(np.reshape(np.array(train_df[c]), (-1, 1)))
         train_df[c] = np.reshape(train_c_scaled, (-1))
+        logging.info("continous column {} stats after scaling in train: {}".format(c, stats.describe(train_df[c])))
         other_df[c] = other_df[c].apply(lambda x: 0.0 if np.isnan(x) else x)
+        logging.info("continous column {} stats in other : {}".format(c, stats.describe(other_df[c])))
         other_c_scaled = scaler.transform(np.reshape(np.array(other_df[c]), (-1, 1)))
         other_df[c] = np.reshape(other_c_scaled, (-1))
+        logging.info("continous column {} stats after scaling in other: {}".format(c, stats.describe(other_df[c])))
 
     train_raw_labels = train_df[label_columns]
     other_raw_labels = other_df[label_columns]
@@ -114,6 +120,10 @@ def data_preparation():
     other_income = (other_raw_labels['income_50k'] == ' 50000+.').astype(int)
     other_marital = (other_raw_labels['marital_stat'] == ' Never married').astype(int)
 
+    logging.info("train income hist {}".format(np.histogram(train_income)))
+    logging.info("train material hist {}".format(np.histogram(train_marital)))
+    logging.info("other income hist {}".format(np.histogram(other_income)))
+    logging.info("other material hist {}".format(np.histogram(other_marital)))
     dict_outputs = {
         'income': 2,
         'marital': 2
@@ -186,11 +196,13 @@ def main():
         input_feats_tensors = [tf.cast(tf.expand_dims(x, -1), tf.float32)
                                for x in input_feats_tensors]
         input_feats = tf.concat(input_feats_tensors, -1)
+        input_feats = tf_print(input_feats, 'input_feats_train')
         task_label_onehot = {}
         for task_key, task_label in train_label_t.items():
             for label_dim, task_t_k in output_info:
                 if task_key == task_t_k:
                     task_label_oh = tf.one_hot(task_label, label_dim)
+                    task_label_oh = tf_print(task_label_oh, 'task_label_oh_train_{}'.format(task_key))
                     task_label_onehot[task_key] = task_label_oh
         logging.info("input_train feats {} labels {}".format(input_feats,
                                                       task_label_onehot))
@@ -209,11 +221,13 @@ def main():
             tf.cast(tf.expand_dims(x, -1), tf.float32)
             for x in eval_feats_tensors]
         eval_feats = tf.concat(eval_feats_tensors, -1)
+        eval_feats = tf_print(eval_feats, 'input_feats_eval')
         eval_task_label_onehot = {}
         for task_key, task_label in eval_label_t.items():
             for label_dim, task_t_k in output_info:
                 if task_key == task_t_k:
                     task_label_oh = tf.one_hot(task_label, label_dim)
+                    task_label_oh = tf_print(task_label_oh, 'task_label_oh_eval_{}'.format(task_key))
                     eval_task_label_onehot[task_key] = task_label_oh
         logging.info("input_eval_fn feats {} labels {}".format(eval_feats,
                                                         eval_task_label_onehot))

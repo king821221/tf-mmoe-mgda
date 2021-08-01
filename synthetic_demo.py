@@ -155,7 +155,7 @@ def main():
         train_ds = tf.data.Dataset.from_tensor_slices(
             (dict(train_data), train_label))
 
-        train_ds = train_ds.prefetch(len(train_data) / 3)
+        train_ds = train_ds.prefetch(int(len(train_data) / 3))
         train_ds = train_ds.shuffle(buffer_size=len(train_data), seed=SEED)
         train_ds = train_ds.batch(args.batch_size)
         train_iter = train_ds.make_one_shot_iterator()
