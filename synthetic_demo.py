@@ -5,9 +5,9 @@ Copyright (c) 2018 Drawbridge, Inc
 Licensed under the MIT License (see LICENSE for details)
 Written by Peizhou Liao
 """
-
+import argparse
 import random
-
+import json
 import pandas as pd
 import numpy as np
 import tensorflow as tf
@@ -16,10 +16,12 @@ import sys
 import logging
 
 from model import Model
+from util import tf_print
+
+from solvers.constants import SolverConstants
+from solvers.task_weight_solver_factory import TaskWeightSolverFactory
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
-
-import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--batch_size', default=128, type=int)
@@ -31,6 +33,7 @@ parser.add_argument('--dropout_rate', default=0.2, type=float)
 parser.add_argument('--l2_emb', default=0.0, type=float)
 parser.add_argument('--gradient_norm_type', default='l2', type=str)
 parser.add_argument('--model_checkpoint_dir', default='./sync_model', type=str)
+parser.add_argument('--config', default='config.json', type=str)
 
 args = parser.parse_args()
 
@@ -114,6 +117,20 @@ def data_preparation():
 
     logging.info("y0 {} y1 {} y2 {}".format(np.shape(y0), np.shape(y1), np.shape(y2)))
 
+    logging.info('train_data summary {}'.format(train_data.describe()))
+    logging.info('validation_data summary {}'.format(validation_data.describe()))
+    logging.info('test_data summary {}'.format(test_data.describe()))
+
+    for key in train_label.keys():
+      logging.info("train_label {} hist {}".format(
+          key, np.histogram(train_label[key])))
+    for key in validation_label.keys():
+      logging.info("validation_label {} hist {}".format(
+          key, np.histogram(validation_label[key])))
+    for key in test_label.keys():
+      logging.info("test_label {} hist {}".format(
+          key, np.histogram(test_label[key])))
+
     dict_outputs = {
         'y0': 2,
         'y1': 2,
@@ -127,6 +144,9 @@ def data_preparation():
            test_data, test_label, output_info
 
 def main():
+    with open(args.config, 'r') as f:
+        config = json.load(f)
+
     # Load the data
     train_data, train_label, validation_data, \
     validation_label, test_data, test_label, output_info = \
@@ -138,12 +158,10 @@ def main():
 
     assert isinstance(train_label, dict), \
         'INVALID train_label NOT DICT {}'.format(type(train_label))
-    for task_key, labels in train_label.items():
-        logging.info("task key {} label shape = {}".format(task_key,
-                                                           np.shape(labels)))
+    #for task_key, labels in train_label.items():
+        #logging.info("task key {} label shape = {}".format(task_key, np.shape(labels)))
 
     num_tasks = len(train_label.keys())
-    num_experts = 8
 
     optimizer = tf.train.AdamOptimizer(learning_rate=args.learning_rate)
 
@@ -165,14 +183,16 @@ def main():
         input_feats_tensors = [tf.cast(tf.expand_dims(x, -1), tf.float32)
                                for x in input_feats_tensors]
         input_feats = tf.concat(input_feats_tensors, -1)
+        input_feats = tf_print(input_feats, 'input_feats_train')
         task_label_onehot = {}
         for task_key, task_label in train_label_t.items():
             for label_dim, task_t_k in output_info:
                 if task_key == task_t_k:
                     task_label_oh = tf.one_hot(task_label, label_dim)
+                    task_label_oh = tf_print(task_label_oh, 'task_label_oh_train_{}'.format(task_key))
                     task_label_onehot[task_key] = task_label_oh
-        logging.info("input_train feats {} labels {}".format(
-            input_feats, task_label_onehot))
+        logging.info("input_train feats {} labels {}".format(input_feats,
+                                                      task_label_onehot))
         return input_feats, task_label_onehot
 
     def input_eval_fn():
@@ -188,14 +208,16 @@ def main():
             tf.cast(tf.expand_dims(x, -1), tf.float32)
             for x in eval_feats_tensors]
         eval_feats = tf.concat(eval_feats_tensors, -1)
+        eval_feats = tf_print(eval_feats, 'input_feats_eval')
         eval_task_label_onehot = {}
         for task_key, task_label in eval_label_t.items():
             for label_dim, task_t_k in output_info:
                 if task_key == task_t_k:
                     task_label_oh = tf.one_hot(task_label, label_dim)
+                    task_label_oh = tf_print(task_label_oh, 'task_label_oh_eval_{}'.format(task_key))
                     eval_task_label_onehot[task_key] = task_label_oh
-        logging.info("input_eval_fn feats {} labels {}".format(
-            eval_feats, eval_task_label_onehot))
+        logging.info("input_eval_fn feats {} labels {}".format(eval_feats,
+                                                        eval_task_label_onehot))
         return eval_feats, eval_task_label_onehot
 
     def input_predict_fn():
@@ -225,7 +247,16 @@ def main():
         return tf.metrics.accuracy(labels=tf.argmax(labels, -1),
                                    predictions=tf.argmax(logits, -1))
 
-    model = Model(num_tasks, num_experts, output_info, optimizer,
+    task_weight_solve_config = config['task_weight']
+    task_weight_solve_config[SolverConstants.NUM_TASKS_KEY] = num_tasks
+
+    mmoe_config = config['mmoe']
+
+    model = Model(num_tasks,
+                  mmoe_config,
+                  task_weight_solve_config,
+                  output_info,
+                  optimizer,
                   input_train_fn=input_train_fn,
                   input_eval_fn=input_eval_fn,
                   input_predict_fn=input_predict_fn,
@@ -233,6 +264,7 @@ def main():
                   loss_fn=loss_fn,
                   eval_metrics_fn=eval_metrics_fn,
                   args=args)
+
     terminate = False
 
     for epoch in range(args.num_epochs):

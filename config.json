@@ -1,0 +1,9 @@
+{
+    "task_weight": {
+        "task_weight_solver": "homo_unc"
+    },
+    "mmoe": {
+        "num_experts": 8,
+        "hidden_units": 64
+    }
+}

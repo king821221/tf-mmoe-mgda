@@ -8,11 +8,15 @@ Written by Alvin Deng
 
 import logging
 import os
-import time
-from min_norm_solvers import MinNormSolver
-import tensorflow as tf
-from mmoe import MMoE
 import sys
+import time
+
+import tensorflow as tf
+
+from mmoe import MMoE
+from solvers.constants import SolverConstants
+from solvers.task_weight_solver_factory import TaskWeightSolverFactory
+from gradient_normalizer import gradient_normalize_func
 from util import tf_print
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
@@ -29,14 +33,24 @@ def del_file(path):
 
 class Model(object):
 
-    def __init__(self, num_tasks, num_experts, output_info, optimizer,
-                 input_train_fn, input_eval_fn, input_predict_fn,
-                 task_share_grad_var_fn, loss_fn, eval_metrics_fn,
+    def __init__(self,
+                 num_tasks,
+                 mmoe_config,
+                 task_weight_solver_config,
+                 output_info,
+                 optimizer,
+                 input_train_fn,
+                 input_eval_fn,
+                 input_predict_fn,
+                 task_share_grad_var_fn,
+                 loss_fn,
+                 eval_metrics_fn,
                  args):
         self.num_tasks = num_tasks
-        self.num_experts = num_experts
+        self.mmoe_config = mmoe_config
         self.output_info = output_info
         self.optimizer = optimizer
+        self.task_weight_solver_config = task_weight_solver_config
         # grad_var_fn: select task share trainable variables
         self.task_share_grad_var_fn = task_share_grad_var_fn
         # loss_fn: function to compute loss from logits and labels
@@ -57,10 +71,13 @@ class Model(object):
     def compute_logits(self, input_feats, training=False):
         tf.summary.histogram("input_feats", input_feats)
 
+        units = self.mmoe_config['hidden_units']
+        num_experts = self.mmoe_config['num_experts']
+
         with tf.variable_scope('models'):
             mmoe_layers = MMoE(
-                units=4,
-                num_experts=self.num_experts,
+                units=units,
+                num_experts=num_experts,
                 num_tasks=self.num_tasks
             )
 
@@ -135,13 +152,46 @@ class Model(object):
 
         return loss_per_task, eval_metrics_per_task
 
+    def normalize_gradients(self,
+                            task_shared_gradients,
+                            loss_per_task,
+                            gradient_norm_type):
+      gn = gradient_normalize_func(task_shared_gradients,
+                                   loss_per_task,
+                                   normalization_type=gradient_norm_type)
+
+      for t in task_shared_gradients.keys():
+        for gr_i in range(len(task_shared_gradients[t])):
+          task_shared_gradients[t][gr_i] =\
+            tf_print(task_shared_gradients[t][gr_i],
+                    message = 'task_shared_grads_{}_{}'.format(t, gr_i))
+          tf.summary.histogram("task_shared_gradients_{}_{}".format(t, gr_i),
+                               task_shared_gradients[t][gr_i])
+          if t not in gn:
+            scale_f = 1.0
+          else:
+            scale_f = gn[t]
+            logging.info("scale gradients from task {} {}".format(t, scale_f))
+          scale_f = tf_print(scale_f, message = 'scale_f_{}'.format(t))
+          tf.summary.histogram("gradient_scale_{}".format(t), scale_f)
+          for gr_i in range(len(task_shared_gradients[t])):
+            task_shared_gradients[t][gr_i] =\
+              task_shared_gradients[t][gr_i] / (scale_f+tf.constant(.00000001))
+            task_shared_gradients[t][gr_i] = \
+              tf_print(task_shared_gradients[t][gr_i],
+                       message='task_shared_norm_grads_{}_{}'.format(t, gr_i))
+            tf.summary.histogram("task_shared_norm_gradients_{}_{}".format(t, gr_i),
+                                 task_shared_gradients[t][gr_i])
+
+        return task_shared_gradients
+
     def train_loss_fn(self, output_task_logits, input_labels):
-        vars = tf.trainable_variables()
+        trainable_variables = tf.trainable_variables()
 
         loss_per_task = {}
         task_shared_gradients = {}
 
-        task_shared_vars = self.task_share_grad_var_fn(vars)
+        task_shared_vars = self.task_share_grad_var_fn(trainable_variables)
 
         for task_key, output_logits in output_task_logits.items():
             label_t = input_labels[task_key]
@@ -176,47 +226,26 @@ class Model(object):
             logging.info("task_shared_gradients {}"
                          .format(task_shared_gradients))
 
-        gn = MinNormSolver.gradient_normalizers(task_shared_gradients,
-                                                loss_per_task,
-                                                normalization_type=self.args.gradient_norm_type)
-
-        for t in task_shared_gradients.keys():
-            for gr_i in range(len(task_shared_gradients[t])):
-                task_shared_gradients[t][gr_i] =\
-                    tf_print(task_shared_gradients[t][gr_i],
-                             message = 'task_shared_grads_{}_{}'.format(t, gr_i))
-                tf.summary.histogram("task_shared_gradients_{}_{}".format(t, gr_i),
-                                     task_shared_gradients[t][gr_i])
-            if t not in gn:
-                scale_f = 1.0
-            else:
-                scale_f = gn[t]
-                logging.info("scale gradients from task {} {}"
-                             .format(t, scale_f))
-            scale_f = tf_print(scale_f, message = 'scale_f_{}'.format(t))
-            tf.summary.histogram("gradient_scale_{}".format(t), scale_f)
-            for gr_i in range(len(task_shared_gradients[t])):
-                task_shared_gradients[t][gr_i] =\
-                    task_shared_gradients[t][gr_i] / (scale_f+tf.constant(.00000001))
-                task_shared_gradients[t][gr_i] = \
-                    tf_print(task_shared_gradients[t][gr_i],
-                             message='task_shared_norm_grads_{}_{}'.format(t, gr_i))
-                tf.summary.histogram("task_shared_norm_gradients_{}_{}".format(t, gr_i),
-                                     task_shared_gradients[t][gr_i])
-
-        task_shared_gradients_vec = list(task_shared_gradients.values())
-
-        logging.info("task_shared_gradients_vec {} {}".format(
-            len(task_shared_gradients_vec), task_shared_gradients_vec
-        ))
+        gradient_norm_type = self.args.gradient_norm_type
+        task_shared_gradients = self.normalize_gradients(task_shared_gradients,
+                                                         loss_per_task,
+                                                         gradient_norm_type)
+        solv_input = {
+            SolverConstants.TASK_SHARED_GRADS_KEY : task_shared_gradients
+        }
 
         # solve_vec: (num_tasks,)
-        solv_vec, _ = MinNormSolver.find_min_norm_element(
-            task_shared_gradients_vec)
+        print("Task weight config {} input args: {}".format(
+            self.task_weight_solver_config, vars(self.args)))
+
+        task_weight_solver = TaskWeightSolverFactory.create_solver(
+            self.task_weight_solver_config)
+
+        solv_vec = task_weight_solver(solv_input, **vars(self.args))
 
         logging.info("task weight solv vec {}".format(solv_vec))
 
-        solv_vec = tf_print(solv_vec, 'task_solution_vec')
+        solv_vec = tf_print(solv_vec, 'task_solution_vec', level=1)
 
         for task_idx in range(self.num_tasks):
             tf.summary.scalar('solv_vec[{}]'.format(task_idx),

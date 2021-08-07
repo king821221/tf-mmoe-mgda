@@ -20,10 +20,10 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
-import tensorflow as tf
 import numpy as np
+import tensorflow as tf
 
-from min_norm_solvers import MinNormSolver
+from solvers.min_norm_solvers import MinNormSolver
 from util import Constants
 
 Constants.TF_PRINT_FLAG = 0

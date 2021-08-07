@@ -9,6 +9,7 @@ Written by Alvin Deng
 import argparse
 import random
 import traceback
+import json
 import logging
 import pandas as pd
 import numpy as np
@@ -18,6 +19,8 @@ import sys
 from sklearn.preprocessing import StandardScaler
 from util import tf_print
 from scipy import stats
+
+from solvers.constants import SolverConstants
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
@@ -33,6 +36,7 @@ parser.add_argument('--gradient_norm_type', default='l2', type=str)
 parser.add_argument('--model_checkpoint_dir',
                     default='./census_income_model',
                     type=str)
+parser.add_argument('--config', default='config.json', type=str)
 
 args = parser.parse_args()
 
@@ -159,6 +163,9 @@ def data_preparation():
            test_data, test_label, output_info
 
 def main():
+    with open(args.config, 'r') as f:
+        config = json.load(f)
+
     # Load the data
     train_data, train_label, validation_data, \
     validation_label, test_data, test_label, output_info = \
@@ -174,7 +181,6 @@ def main():
         #logging.info("task key {} label shape = {}".format(task_key, np.shape(labels)))
 
     num_tasks = len(train_label.keys())
-    num_experts = 8
 
     optimizer = tf.train.AdamOptimizer(learning_rate=args.learning_rate)
 
@@ -260,7 +266,16 @@ def main():
         return tf.metrics.accuracy(labels=tf.argmax(labels, -1),
                                    predictions=tf.argmax(logits, -1))
 
-    model = Model(num_tasks, num_experts, output_info, optimizer,
+    task_weight_solve_config = config['task_weight']
+    task_weight_solve_config[SolverConstants.NUM_TASKS_KEY] = num_tasks
+
+    mmoe_config = config['mmoe']
+
+    model = Model(num_tasks,
+                  mmoe_config,
+                  task_weight_solve_config,
+                  output_info,
+                  optimizer,
                   input_train_fn=input_train_fn,
                   input_eval_fn=input_eval_fn,
                   input_predict_fn=input_predict_fn,
@@ -268,6 +283,7 @@ def main():
                   loss_fn=loss_fn,
                   eval_metrics_fn=eval_metrics_fn,
                   args=args)
+
     terminate = False
 
     for epoch in range(args.num_epochs):
