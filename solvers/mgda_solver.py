@@ -1,3 +1,5 @@
+import tensorflow as tf
+
 from solvers.task_weight_solver import TaskWeightSolver
 from solvers.constants import SolverConstants
 from solvers.min_norm_solvers import MinNormSolver
@@ -16,4 +18,4 @@ class MultiGradientDescentSolver(TaskWeightSolver):
         solv_vec, _ = MinNormSolver.find_min_norm_element(
             task_shared_gradients_vec)
 
-        return solv_vec
+        return tf.stop_gradient(solv_vec)

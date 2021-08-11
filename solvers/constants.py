@@ -7,3 +7,5 @@ class SolverConstants(object):
     TASK_SHARED_GRADS_KEY = 'task_shared_gradients'
 
     TASK_WEIGHT_SOLVER_KEY = 'task_weight_solver'
+
+    TASK_WEIGHT_KEY = 'task_weight'

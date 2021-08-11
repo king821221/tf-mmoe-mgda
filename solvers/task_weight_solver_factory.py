@@ -1,6 +1,7 @@
 from solvers.constants import SolverConstants
 from solvers.mgda_solver import MultiGradientDescentSolver
 from solvers.homo_unc_solver import HomoUncertaintyWeightSolver
+from solvers.manual_solver import ManualWeightSolver
 
 
 class TaskWeightSolverFactory(object):
@@ -14,5 +15,8 @@ class TaskWeightSolverFactory(object):
 
         if solver_key == 'homo_unc':
             return HomoUncertaintyWeightSolver(config)
+
+        if solver_key == 'manual':
+            return ManualWeightSolver(config)
 
         raise KeyError('Unsupported task weight solver {}'.format(solver_key))

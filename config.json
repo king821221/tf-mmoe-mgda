@@ -1,6 +1,7 @@
 {
     "task_weight": {
-        "task_weight_solver": "homo_unc"
+        "task_weight_solver": "mgda",
+        "task_weight": {"income": 0.5, "marital": 0.5}
     },
     "mmoe": {
         "num_experts": 8,

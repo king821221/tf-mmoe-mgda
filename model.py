@@ -247,16 +247,12 @@ class Model(object):
 
         solv_vec = tf_print(solv_vec, 'task_solution_vec', level=1)
 
-        for task_idx in range(self.num_tasks):
-            tf.summary.scalar('solv_vec[{}]'.format(task_idx),
-                              solv_vec[task_idx])
-
         loss_per_task_vec = tf.stack(list(loss_per_task.values()))
 
         # WARNING: MUST stop gradients from the final loss to solv_vec
         # since solv_vec is computed based on the gradients from the 1st pass
         # otherwise, we might encounter variable NAN issues
-        final_loss = tf.reduce_sum(tf.stop_gradient(solv_vec) * loss_per_task_vec)
+        final_loss = tf.reduce_sum(solv_vec * loss_per_task_vec)
 
         return self.optimizer.minimize(final_loss), final_loss, solv_vec
 
@@ -270,6 +266,7 @@ class Model(object):
         loss = 0
         train_op = None
         predicts = {}
+        predictions = {}
         eval_metric_ops = {}
 
         # predictions
@@ -292,6 +289,9 @@ class Model(object):
             ##training op and loss
             train_op, loss, solv_vec = self.train_loss_fn(task_logits, labels)
             tf.summary.scalar("train loss", loss)
+            for task_idx in range(self.num_tasks):
+                tf.summary.scalar('solv_vec_[{}]'.format(task_idx),
+                                  solv_vec[task_idx])
 
         elif mode == tf.estimator.ModeKeys.EVAL:
             # eval loss and metrics
@@ -305,7 +305,9 @@ class Model(object):
 
         label_tensors = tf.stack(list(labels.values()), axis=1)
 
-        predictions = {"prob": predict_tensors, 'labels': label_tensors}
+        predictions['prob'] = predict_tensors
+
+        predictions['labels'] = label_tensors
 
         return tf.estimator.EstimatorSpec(
             mode=mode,
