@@ -26,3 +26,5 @@ task dependency and achieve global optimimum via approaching Pareto Optimality.
    2) python census_income_demo.py
 
    3) python synthetic_demo.py
+
+Any feedback and suggestions are greatly appreiciated: 1485840691@qq.com
